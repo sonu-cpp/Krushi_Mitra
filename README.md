@@ -47,8 +47,20 @@ Open Terminal/Command Prompt
 ```bash
 git clone https://github.com/sonu-cpp/Krushi_Mitra
 ```
+  
 ### Activate the Virtual Environment
 
+For Windows users: 
+-  The Cloned repositories are usually present in Documents -> GitHub Desktop 
+-  Right click -> Open with Terminal
+-  Run the following commands
+
+#### Create a Python Virtual Enviroment
+```bash
+python3 -m venv venv
+```
+
+#### Activate the Virtual Enviroment
 #### Windows (PowerShell)
 
 ```bash
