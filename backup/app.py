@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from utils.translations import t
 from utils.crop_utils import predict_crop, predict_top_crops, predict_top_crops_merged, get_crop_info
 from utils.fertilizer_utils import get_all_crops, get_soil_types_for_crop, recommend_fertilizer
-
+from utils.mandi_utils import get_states, get_commodities, get_prices
 
 st.set_page_config(page_title="Krushi Mitra", page_icon="🌾", layout="wide", initial_sidebar_state="expanded")
 
@@ -66,7 +66,7 @@ with st.sidebar:
         st.rerun()
     L = lang
     st.markdown("---")
-    nav_options = [t("nav_home",L), t("nav_crop",L), t("nav_fertilizer",L), t("nav_disease",L)]
+    nav_options = [t("nav_home",L), t("nav_crop",L), t("nav_fertilizer",L), t("nav_disease",L), t("nav_mandi",L)]
     default_page = st.session_state.get("_active_page", nav_options[0])
     if default_page not in nav_options:
         default_page = nav_options[0]
@@ -85,8 +85,8 @@ if page == t("nav_home", L):
     st.markdown(f"### {t('welcome', L)}")
     st.markdown(t('home_desc', L))
     st.markdown("<br>", unsafe_allow_html=True)
-    c1,c2,c3 = st.columns(3)
-    for col,icon,feat,desc in [(c1,"🌱",t("feature_crop",L),t("feature_crop_desc",L)),(c2,"🧪",t("feature_fertilizer",L),t("feature_fertilizer_desc",L)),(c3,"🔬",t("feature_disease",L),t("feature_disease_desc",L))]:
+    c1,c2,c3,c4 = st.columns(4)
+    for col,icon,feat,desc in [(c1,"🌱",t("feature_crop",L),t("feature_crop_desc",L)),(c2,"🧪",t("feature_fertilizer",L),t("feature_fertilizer_desc",L)),(c3,"🔬",t("feature_disease",L),t("feature_disease_desc",L)),(c4,"📊",t("feature_mandi",L),t("feature_mandi_desc",L))]:
         with col:
             st.markdown(f'<div class="feature-card"><div class="icon">{icon}</div><h3>{feat}</h3><p>{desc}</p></div>', unsafe_allow_html=True)
     st.markdown("<br>", unsafe_allow_html=True)
@@ -245,9 +245,19 @@ elif page == t("nav_crop", L):
         # Location badge
         st.info(f"📍 **{district}, {state}**")
 
-        # Fetch environmental data silently (used later for prediction)
+        # Show fetched environmental data
         env         = get_district_env_data(district)
         annual_rain = get_district_annual_rainfall(district)
+        st.markdown(f"""
+        <div style="margin:0.3rem 0 1.2rem 0">
+            <span class="env-pill">🌡️ Avg Temp: {env['temperature']:.1f}°C</span>
+            <span class="env-pill">💧 Avg Humidity: {env['humidity']:.0f}%</span>
+            <span class="env-pill">🌧️ Annual Rainfall: {annual_rain:.0f} mm</span>
+        </div>
+        <p style="color:#555;font-size:0.88rem;margin-bottom:1rem">
+        ✅ Environmental data fetched for your district. Now upload a soil photo.
+        </p>
+        """, unsafe_allow_html=True)
 
         st.markdown("#### 📷 Upload a photo of your soil")
         st.caption("Dry or slightly moist soil works best. Make sure the soil is clearly visible.")
@@ -284,6 +294,7 @@ elif page == t("nav_crop", L):
                 st.markdown(f"""
                 <div class="result-box" style="margin-top:0">
                     <h2 style="font-size:1.3rem">🪨 {detected_soil}</h2>
+                    <div class="confidence">Confidence: {soil_conf}%</div>
                     <div class="crop-detail">
                         {info.get('description','')}<br><br>
                         <strong>Characteristics:</strong> {info.get('characteristics','')}
@@ -306,15 +317,12 @@ elif page == t("nav_crop", L):
     # ══════════════════════════════════════════════════════════════════════════
     elif step == 2:
         detected_soil, soil_conf = st.session_state.soil_detected
-        st.caption(f"🪨 {detected_soil} · 📍 {st.session_state.sel_district}")
+        st.caption(f"🪨 {detected_soil} ({soil_conf}%) · 📍 {st.session_state.sel_district}")
         st.markdown("---")
 
-        st.markdown(f"""
-        <div class="q-card">
-        <div class="q-title">🌿 Question 1 of 6 &nbsp;·&nbsp; Nitrogen Estimation</div>
-        <div class="q-sub">How do the crop leaves usually look in your field?</div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown('<div class="q-card">', unsafe_allow_html=True)
+        st.markdown('<div class="q-title">🌿 Question 1 of 4 &nbsp;·&nbsp; Nitrogen Estimation</div>', unsafe_allow_html=True)
+        st.markdown('<div class="q-sub">How do the crop leaves usually look in your field?</div>', unsafe_allow_html=True)
 
         opts = [
             ("Yellowish",     "🟡", "Pale / yellow leaves — low nitrogen"),
@@ -330,6 +338,8 @@ elif page == t("nav_crop", L):
                     st.session_state.crop_step = 3
                     st.rerun()
 
+        st.markdown('</div>', unsafe_allow_html=True)
+
         col_back, _ = st.columns([1, 5])
         with col_back:
             if st.button("← Back", key="back_step2"):
@@ -337,20 +347,27 @@ elif page == t("nav_crop", L):
                 st.rerun()
 
     # ══════════════════════════════════════════════════════════════════════════
-    # STEP 3 — Phosphorus Q1: Early Growth
+    # STEP 3 — Phosphorus: Growth + Flowering
     # ══════════════════════════════════════════════════════════════════════════
     elif step == 3:
         st.caption(f"✅ N answer: **{st.session_state.ans_N}**")
         st.markdown("---")
 
-        st.markdown("""
-        <div class="q-card">
-        <div class="q-title">🌱 Question 2 of 6 &nbsp;·&nbsp; Phosphorus Estimation</div>
-        <div class="q-sub">Did the crop grow well in the early stage (germination / seedling)?</div>
-        </div>
-        """, unsafe_allow_html=True)
+        # P sub-question 1 — early growth
+        st.markdown('<div class="q-card">', unsafe_allow_html=True)
+        st.markdown('<div class="q-title">🌱 Question 2a of 4 &nbsp;·&nbsp; Phosphorus Estimation</div>', unsafe_allow_html=True)
+        st.markdown('<div class="q-sub">Did the crop grow well in the early stage (germination / seedling)?</div>', unsafe_allow_html=True)
         p1_opts = ["Weak growth", "Okay growth", "Good growth", "Very healthy growth"]
         p1_sel  = st.radio("", p1_opts, key="p1_radio", horizontal=True, label_visibility="collapsed")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        # P sub-question 2 — flowering delay
+        st.markdown('<div class="q-card">', unsafe_allow_html=True)
+        st.markdown('<div class="q-title">🌸 Question 2b of 4 &nbsp;·&nbsp; Phosphorus Estimation</div>', unsafe_allow_html=True)
+        st.markdown('<div class="q-sub">Does the crop take too long to grow or flower (delayed maturity)?</div>', unsafe_allow_html=True)
+        p2_opts = ["Yes", "Sometimes", "No"]
+        p2_sel  = st.radio("", p2_opts, key="p2_radio", horizontal=True, label_visibility="collapsed")
+        st.markdown('</div>', unsafe_allow_html=True)
 
         col_back, col_next = st.columns([1, 4])
         with col_back:
@@ -360,86 +377,41 @@ elif page == t("nav_crop", L):
         with col_next:
             if st.button("Next →", key="step3_next"):
                 st.session_state.ans_P1    = p1_sel
-                st.session_state.crop_step = 3.5
-                st.rerun()
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # STEP 3.5 — Phosphorus Q2: Flowering Delay
-    # ══════════════════════════════════════════════════════════════════════════
-    elif step == 3.5:
-        st.caption(f"✅ N: **{st.session_state.ans_N}** · P Growth: **{st.session_state.ans_P1}**")
-        st.markdown("---")
-
-        st.markdown("""
-        <div class="q-card">
-        <div class="q-title">🌸 Question 3 of 6 &nbsp;·&nbsp; Phosphorus Estimation</div>
-        <div class="q-sub">Does the crop take too long to grow or flower (delayed maturity)?</div>
-        </div>
-        """, unsafe_allow_html=True)
-        p2_opts = ["Yes", "Sometimes", "No"]
-        p2_sel  = st.radio("", p2_opts, key="p2_radio", horizontal=True, label_visibility="collapsed")
-
-        col_back, col_next = st.columns([1, 4])
-        with col_back:
-            if st.button("← Back", key="back_step3b"):
-                st.session_state.crop_step = 3
-                st.rerun()
-        with col_next:
-            if st.button("Next →", key="step3b_next"):
                 st.session_state.ans_P2    = p2_sel
                 st.session_state.crop_step = 4
                 st.rerun()
 
     # ══════════════════════════════════════════════════════════════════════════
-    # STEP 4 — Potassium Q1: Drought Response
+    # STEP 4 — Potassium: Drought Response + Tip Burn
     # ══════════════════════════════════════════════════════════════════════════
     elif step == 4:
         st.caption(f"✅ N: **{st.session_state.ans_N}** · P Growth: **{st.session_state.ans_P1}**")
         st.markdown("---")
 
-        st.markdown("""
-        <div class="q-card">
-        <div class="q-title">💧 Question 4 of 6 &nbsp;·&nbsp; Potassium Estimation</div>
-        <div class="q-sub">What happens to the crop when water is limited for a few days?</div>
-        </div>
-        """, unsafe_allow_html=True)
+        # K sub-question 1 — drought response
+        st.markdown('<div class="q-card">', unsafe_allow_html=True)
+        st.markdown('<div class="q-title">💧 Question 3a of 4 &nbsp;·&nbsp; Potassium Estimation</div>', unsafe_allow_html=True)
+        st.markdown('<div class="q-sub">What happens to the crop when water is limited for a few days?</div>', unsafe_allow_html=True)
         k1_opts = ["Plants dry quickly", "Plants become weak", "Plants manage somehow", "Plants stay healthy"]
         k1_sel  = st.radio("", k1_opts, key="k1_radio", horizontal=False, label_visibility="collapsed")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        # K sub-question 2 — tip burn
+        st.markdown('<div class="q-card">', unsafe_allow_html=True)
+        st.markdown('<div class="q-title">🍂 Question 3b of 4 &nbsp;·&nbsp; Potassium Estimation</div>', unsafe_allow_html=True)
+        st.markdown('<div class="q-sub">Do the leaves dry out or turn brown starting from the edges / sides?</div>', unsafe_allow_html=True)
+        k2_opts = ["Yes, very often", "Sometimes", "Rarely", "Never noticed"]
+        k2_sel  = st.radio("", k2_opts, key="k2_radio", horizontal=True, label_visibility="collapsed")
+        st.markdown('</div>', unsafe_allow_html=True)
 
         col_back, col_next = st.columns([1, 4])
         with col_back:
             if st.button("← Back", key="back_step4"):
-                st.session_state.crop_step = 3.5
+                st.session_state.crop_step = 3
                 st.rerun()
         with col_next:
             if st.button("Next →", key="step4_next"):
                 st.session_state.ans_K1    = k1_sel
-                st.session_state.crop_step = 4.5
-                st.rerun()
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # STEP 4.5 — Potassium Q2: Tip Burn
-    # ══════════════════════════════════════════════════════════════════════════
-    elif step == 4.5:
-        st.caption(f"✅ N: **{st.session_state.ans_N}** · K Drought: **{st.session_state.ans_K1}**")
-        st.markdown("---")
-
-        st.markdown("""
-        <div class="q-card">
-        <div class="q-title">🍂 Question 5 of 6 &nbsp;·&nbsp; Potassium Estimation</div>
-        <div class="q-sub">Do the leaves dry out or turn brown starting from the edges / sides?</div>
-        </div>
-        """, unsafe_allow_html=True)
-        k2_opts = ["Yes, very often", "Sometimes", "Rarely", "Never noticed"]
-        k2_sel  = st.radio("", k2_opts, key="k2_radio", horizontal=True, label_visibility="collapsed")
-
-        col_back, col_next = st.columns([1, 4])
-        with col_back:
-            if st.button("← Back", key="back_step4b"):
-                st.session_state.crop_step = 4
-                st.rerun()
-        with col_next:
-            if st.button("Next →", key="step4b_next"):
                 st.session_state.ans_K2    = k2_sel
                 st.session_state.crop_step = 5
                 st.rerun()
@@ -460,14 +432,15 @@ elif page == t("nav_crop", L):
         # Build district-calibrated labels
         rain_labels = get_rainfall_option_labels(district)
 
-        st.markdown(f"""
-        <div class="q-card">
-        <div class="q-title">🌧️ Question 6 of 6 &nbsp;·&nbsp; Rainfall Feedback</div>
-        <div class="q-sub">How has the rain been in your area recently?<br>
-        <em style="color:#888;font-size:0.83rem">
-        Your district's long-term average: ~{monthly_avg:.0f} mm/month ({annual_avg:.0f} mm/year)</em></div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown('<div class="q-card">', unsafe_allow_html=True)
+        st.markdown('<div class="q-title">🌧️ Question 4 of 4 &nbsp;·&nbsp; Rainfall Feedback</div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="q-sub">How has the rain been in your area recently?'
+            f'<br><em style="color:#888;font-size:0.83rem">'
+            f'Your district\'s long-term average: ~{monthly_avg:.0f} mm/month '
+            f'({annual_avg:.0f} mm/year)</em></div>',
+            unsafe_allow_html=True,
+        )
 
         cols = st.columns(4)
         for i, opt in enumerate(["Very low", "Less than usual", "Normal", "Heavy"]):
@@ -478,10 +451,12 @@ elif page == t("nav_crop", L):
                     st.session_state.crop_step = 5.5
                     st.rerun()
 
+        st.markdown('</div>', unsafe_allow_html=True)
+
         col_back, _ = st.columns([1, 5])
         with col_back:
             if st.button("← Back", key="back_step5"):
-                st.session_state.crop_step = 4.5
+                st.session_state.crop_step = 4
                 st.rerun()
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -523,23 +498,46 @@ elif page == t("nav_crop", L):
         detected_soil, s_conf = st.session_state.soil_detected
         district              = st.session_state.sel_district
 
+        rank_styles = [
+            ("🥇 Best Match",    "crop-rank-card",          "conf-bar"),
+            ("🥈 Alternative",   "crop-rank-card secondary", "conf-bar yellow"),
+            ("🥉 Also Suitable", "crop-rank-card tertiary",  "conf-bar grey"),
+        ]
+
         st.markdown("---")
-        st.markdown(f"### 🌾 Recommended Crop for {district}")
-        st.caption("Based on your soil, district climate, and field observations.")
-
-        # Show only the top crop (highest confidence)
-        best = top_crops[0]
-        if isinstance(best, dict):
-            crop = best["crop"]
+        st.markdown(f"### 🌾 Recommended Crops for {district}")
+        if len(top_crops) == 1:
+            st.caption("The model is highly confident about one crop for your conditions.")
         else:
-            crop = best[0]
+            st.caption(f"Found **{len(top_crops)} suitable crops** based on your soil, "
+                       f"district climate, and field observations.")
 
-        st.markdown(f"""
-        <div class="crop-rank-card">
-            <div class="crop-rank-num">🥇 Best Match</div>
-            <div class="crop-rank-name">{crop.title()}</div>
-        </div>
-        """, unsafe_allow_html=True)
+        for i, result in enumerate(top_crops):
+            # Handle both dict (predict_top_crops_merged) and tuple (predict_top_crops)
+            if isinstance(result, dict):
+                crop   = result["crop"]
+                conf   = result["confidence"]
+                source = result.get("source", "")
+            else:
+                crop, conf = result
+                source = ""
+
+            label, card_cls, bar_cls = rank_styles[i] if i < 3 else rank_styles[2]
+            src_badge = (
+                f'<span style="font-size:0.68rem;background:#e0f2fe;color:#0c4a6e;'
+                f'padding:2px 7px;border-radius:99px;margin-left:8px">{source}</span>'
+                if source else ""
+            )
+            st.markdown(f"""
+            <div class="{card_cls}">
+                <div class="crop-rank-num">{label}{src_badge}</div>
+                <div class="crop-rank-name">{crop.title()}</div>
+                <div class="conf-bar-wrap">
+                    <div class="{bar_cls}" style="width:{min(conf, 99)}%"></div>
+                </div>
+                <div style="font-size:0.8rem;color:#666">{conf}% match score</div>
+            </div>
+            """, unsafe_allow_html=True)
 
         # Parameter details expander
         with st.expander("🔍 View estimated parameters used for prediction"):
@@ -553,7 +551,7 @@ elif page == t("nav_crop", L):
             c2b.metric("Humidity (%)",      params["humidity"])
             c3b.metric("Rainfall (mm/mo)", params["rainfall"])
             st.caption(
-                f"🪨 Soil: {detected_soil} &nbsp;·&nbsp; "
+                f"🪨 Soil: {detected_soil} ({s_conf}%) &nbsp;·&nbsp; "
                 f"📍 District: {district} &nbsp;·&nbsp; "
                 f"🌡️ Environmental data from district records"
             )
@@ -680,4 +678,27 @@ elif page == t("nav_disease", L):
                         st.error(f"Detection failed: {str(e)}")
 
 # ══════════════════════════════════════════════════════════════════════════════
-
+# MANDI
+# ══════════════════════════════════════════════════════════════════════════════
+elif page == t("nav_mandi", L):
+    st.markdown(f'<div class="section-title">📊 {t("mandi_title",L)}</div>', unsafe_allow_html=True)
+    col1,col2 = st.columns(2)
+    with col1:
+        states = ["All States"] + get_states()
+        sel_state = st.selectbox(t("select_state",L), states)
+        sf = None if sel_state == "All States" else sel_state
+    with col2:
+        commodities = ["All Commodities"] + get_commodities(sf)
+        sel_commodity = st.selectbox(t("select_commodity",L), commodities)
+        cf = None if sel_commodity == "All Commodities" else sel_commodity
+    df = get_prices(sf, cf)
+    if df.empty:
+        st.warning("No data for selected filters.")
+    else:
+        m1,m2,m3 = st.columns(3)
+        m1.metric("Markets Listed", len(df))
+        m2.metric("Avg Modal Price (₹/Qtl)", int(df["Modal Price (₹/Qtl)"].mean()))
+        m3.metric("Commodities", df["Commodity"].nunique())
+        st.markdown(f"<br>**{t('price_table',L)}**", unsafe_allow_html=True)
+        st.dataframe(df.sort_values("Modal Price (₹/Qtl)", ascending=False), use_container_width=True, hide_index=True)
+        st.caption("📌 Prices are simulated based on Agmarknet dataset structure. For real-time data, visit agmarknet.gov.in")
