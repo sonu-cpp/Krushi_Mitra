@@ -638,9 +638,17 @@ elif page == t("nav_fertilizer", L):
 # ══════════════════════════════════════════════════════════════════════════════
 elif page == t("nav_disease", L):
     st.markdown(f'<div class="section-title">🔬 {t("disease_title",L)}</div>', unsafe_allow_html=True)
-    st.info("📸 Upload a clear image of the affected leaf. Supported crops: Apple, Corn, Grape, Tomato, Potato, Peach, Pepper, Strawberry and more.")
 
-    uploaded = st.file_uploader(t("upload_image",L), type=["jpg","jpeg","png"])
+    SUPPORTED_CROPS = [
+        "Apple", "Blueberry", "Cherry", "Corn (Maize)", "Grape",
+        "Orange", "Peach", "Pepper (Bell)", "Potato", "Raspberry",
+        "Soybean", "Squash", "Strawberry", "Tomato",
+    ]
+
+    with st.expander("ℹ️ Supported crops"):
+        st.markdown(", ".join(SUPPORTED_CROPS))
+
+    uploaded = st.file_uploader(t("upload_image", L), type=["jpg", "jpeg", "png"])
 
     if uploaded:
         col1, col2 = st.columns([1, 1])
@@ -651,33 +659,44 @@ elif page == t("nav_disease", L):
             if st.button(t("detect_disease", L)):
                 with st.spinner(t("loading", L)):
                     try:
-                        from utils.disease_utils import predict_disease, SEVERITY_COLOR
+                        from utils.disease_utils import predict_disease, SEVERITY_COLOR, NotALeafError, ModelNotFoundError
                         img_bytes = uploaded.read()
                         class_key, display_name, confidence, info = predict_disease(img_bytes)
 
-                        severity  = info.get('severity', 'Unknown')
-                        sev_color = SEVERITY_COLOR.get(severity, '#555')
-                        is_healthy = severity == 'None'
-                        box_icon   = "✅" if is_healthy else "⚠️"
+                        if confidence < 75:
+                            st.warning(
+                                "⚠️ Could not identify the disease with enough confidence. "
+                                "Please upload a clearer, well-lit photo of the affected leaf."
+                            )
+                        else:
+                            severity   = info.get('severity', 'Unknown')
+                            sev_color  = SEVERITY_COLOR.get(severity, '#555')
+                            is_healthy = severity == 'None'
+                            box_icon   = "✅" if is_healthy else "⚠️"
 
-                        st.markdown(f"""
-                        <div class="result-box">
-                            <h2>{box_icon} {display_name}</h2>
-                            <div class="confidence">Confidence: {confidence}%</div>
-                            <div class="crop-detail">
-                                <span style="background:{sev_color};color:white;padding:2px 10px;border-radius:12px;font-size:0.82rem;font-weight:600">{severity} Severity</span>
-                                <br><br>
-                                🦠 <strong>Cause:</strong> {info.get('cause','N/A')}<br><br>
-                                🔍 <strong>Symptoms:</strong> {info.get('symptoms','N/A')}<br><br>
-                                🛡️ <strong>Prevention/Treatment:</strong> {info.get('prevention','N/A')}
+                            st.markdown(f"""
+                            <div class="result-box">
+                                <h2>{box_icon} {display_name}</h2>
+                                <div class="crop-detail">
+                                    <span style="background:{sev_color};color:white;padding:2px 10px;border-radius:12px;font-size:0.82rem;font-weight:600">{severity} Severity</span>
+                                    <br><br>
+                                    🦠 <strong>Cause:</strong> {info.get('cause','N/A')}<br><br>
+                                    🔍 <strong>Symptoms:</strong> {info.get('symptoms','N/A')}<br><br>
+                                    🛡️ <strong>Prevention/Treatment:</strong> {info.get('prevention','N/A')}
+                                </div>
                             </div>
-                        </div>
-                        """, unsafe_allow_html=True)
+                            """, unsafe_allow_html=True)
 
                     except ImportError:
                         st.warning("⚙️ PyTorch is not installed. Run: `pip install torch torchvision` to enable this module.")
+                    except NotALeafError:
+                        st.warning("🌿 The uploaded image does not appear to be a plant leaf. Please upload a clear, close-up photo of an affected leaf.")
+                    except ModelNotFoundError:
+                        st.error("⚙️ Disease detection model not found. Please train the model first using `train_disease_model.py`.")
+                    except ValueError as e:
+                        st.warning(f"🖼️ {str(e)}")
                     except Exception as e:
-                        st.error(f"Detection failed: {str(e)}")
+                        st.error("❌ Something went wrong during detection. Please try again with a different image.")
 
 # ══════════════════════════════════════════════════════════════════════════════
 

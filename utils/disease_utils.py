@@ -1,10 +1,45 @@
 import torch
+import torch.nn as nn
 from torchvision import transforms
 from PIL import Image
 import io
 import os
+import numpy as np
 
-from utils.model import ResNet9
+# ── ResNet9 (self-contained, no utils.model dependency) ──────────────────────
+def conv_block(in_channels, out_channels, pool=False):
+    layers = [
+        nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
+        nn.BatchNorm2d(out_channels),
+        nn.ReLU(inplace=True),
+    ]
+    if pool:
+        layers.append(nn.MaxPool2d(4))
+    return nn.Sequential(*layers)
+
+class ResNet9(nn.Module):
+    def __init__(self, in_channels, num_classes):
+        super().__init__()
+        self.conv1 = conv_block(in_channels, 64)
+        self.conv2 = conv_block(64, 128, pool=True)
+        self.res1  = nn.Sequential(conv_block(128, 128), conv_block(128, 128))
+        self.conv3 = conv_block(128, 256, pool=True)
+        self.conv4 = conv_block(256, 512, pool=True)
+        self.res2  = nn.Sequential(conv_block(512, 512), conv_block(512, 512))
+        self.classifier = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Flatten(),
+            nn.Linear(512, num_classes),
+        )
+
+    def forward(self, x):
+        out = self.conv1(x)
+        out = self.conv2(out)
+        out = self.res1(out) + out
+        out = self.conv3(out)
+        out = self.conv4(out)
+        out = self.res2(out) + out
+        return self.classifier(out)
 
 # ── 38 disease classes (exact order from Harvestify training) ────────────────
 DISEASE_CLASSES = [
@@ -339,34 +374,75 @@ def load_disease_model():
         _disease_model = model
     return _disease_model
 
+# ── Transform (must match training exactly) ───────────────────────────────────
+_TRANSFORM = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.ToTensor(),
+    transforms.Normalize([0.485, 0.456, 0.406],
+                         [0.229, 0.224, 0.225]),
+])
+
+# ── Leaf validation (HSV green check) ────────────────────────────────────────
+def is_leaf_image(image: Image.Image, threshold: float = 0.08) -> bool:
+    """Returns True if the image contains enough green vegetation to be a leaf."""
+    img_resized = image.resize((128, 128))
+    img_array   = np.array(img_resized).astype(np.float32) / 255.0
+    r, g, b     = img_array[:,:,0], img_array[:,:,1], img_array[:,:,2]
+    # Green pixels: green channel dominates both red and blue
+    green_mask  = (g > r + 0.05) & (g > b + 0.05) & (g > 0.2)
+    green_ratio = green_mask.sum() / green_mask.size
+    return green_ratio >= threshold
+
 # ── Inference ─────────────────────────────────────────────────────────────────
+class NotALeafError(Exception):
+    pass
+
+class ModelNotFoundError(Exception):
+    pass
+
 def predict_disease(image_bytes):
     """
-    Takes raw image bytes, returns (class_key, display_name, confidence, info_dict)
+    Takes raw image bytes, returns (class_key, display_name, confidence_pct, info_dict).
+    Raises NotALeafError if image doesn't look like a leaf.
+    Raises ModelNotFoundError if model file is missing.
     """
+    # ── Check model file exists ───────────────────────────────────────────────
+    if not os.path.exists(MODEL_PATH):
+        raise ModelNotFoundError(
+            f"Model file not found at: {MODEL_PATH}\n"
+            "Please train the model first using train_disease_model.py"
+        )
+
+    # ── Load image ────────────────────────────────────────────────────────────
+    try:
+        image = Image.open(io.BytesIO(image_bytes)).convert('RGB')
+    except Exception:
+        raise ValueError("Could not read the uploaded image. Please upload a valid JPG or PNG file.")
+
+    # ── Leaf validation ───────────────────────────────────────────────────────
+    if not is_leaf_image(image):
+        raise NotALeafError(
+            "The uploaded image does not appear to be a plant leaf. "
+            "Please upload a clear photo of an affected leaf."
+        )
+
+    # ── Run inference ─────────────────────────────────────────────────────────
     model = load_disease_model()
-
-    transform = transforms.Compose([
-        transforms.Resize(256),
-        transforms.ToTensor(),
-    ])
-
-    image = Image.open(io.BytesIO(image_bytes)).convert('RGB')
-    img_t = transform(image)
+    img_t = _TRANSFORM(image)
     img_u = torch.unsqueeze(img_t, 0)
 
     with torch.no_grad():
-        outputs = model(img_u)
+        outputs       = model(img_u)
         probabilities = torch.nn.functional.softmax(outputs, dim=1)
         confidence, pred_idx = torch.max(probabilities, dim=1)
 
-    class_key = DISEASE_CLASSES[pred_idx.item()]
+    class_key      = DISEASE_CLASSES[pred_idx.item()]
     confidence_pct = round(confidence.item() * 100, 2)
     info = DISEASE_INFO.get(class_key, {
-        'display': class_key.replace('___', ' — ').replace('_', ' '),
-        'severity': 'Unknown',
-        'cause': 'Information not available.',
-        'symptoms': 'Refer to an agricultural expert.',
+        'display':    class_key.replace('___', ' — ').replace('_', ' '),
+        'severity':   'Unknown',
+        'cause':      'Information not available.',
+        'symptoms':   'Refer to an agricultural expert.',
         'prevention': 'Consult your local agricultural extension officer.',
     })
 
