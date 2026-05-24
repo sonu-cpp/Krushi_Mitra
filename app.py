@@ -77,9 +77,8 @@ with st.sidebar:
 
 L = st.session_state.lang
 
-# ══════════════════════════════════════════════════════════════════════════════
+
 # HOME
-# ══════════════════════════════════════════════════════════════════════════════
 if page == t("nav_home", L):
     st.markdown(f'<div class="main-header"><h1>🌾 {t("app_title",L)}</h1><p>{t("app_subtitle",L)}</p></div>', unsafe_allow_html=True)
     st.markdown(f"### {t('welcome', L)}")
